@@ -13,54 +13,7 @@ import (
 	"time"
 )
 
-type Fingerprint struct {
-	Path           string            `yaml:"path"`
-	RequestMethod  string            `yaml:"request_method"`
-	RequestHeaders map[string]string `yaml:"request_headers"`
-	RequestData    string            `yaml:"request_data"`
-	StatusCode     int               `yaml:"status_code"`
-	Headers        map[string]string `yaml:"headers"`
-	Keyword        []string          `yaml:"keyword"`
-	FaviconHash    []string          `yaml:"favicon_hash"`
-}
-
-type WebFingerprint struct {
-	Name        string        `yaml:"name"`
-	Priority    int           `yaml:"priority"`
-	NucleiTags  [][]string    `yaml:"nuclei_tags"`
-	Fingerprint []Fingerprint `yaml:"fingerprint"`
-}
-
-func readYAMLFiles(dir string) ([]WebFingerprint, error) {
-	var fingerprints []WebFingerprint
-
-	files, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, file := range files {
-		if filepath.Ext(file.Name()) == ".yaml" {
-			filePath := filepath.Join(dir, file.Name())
-			data, err := os.ReadFile(filePath)
-			if err != nil {
-				return nil, err
-			}
-
-			var fp WebFingerprint
-			err = yaml.Unmarshal(data, &fp)
-			if err != nil {
-				return nil, err
-			}
-
-			fingerprints = append(fingerprints, fp)
-		}
-	}
-
-	return fingerprints, nil
-}
-
-func checkTarget(target string, fp WebFingerprint, wg *sync.WaitGroup, sem chan struct{}, results chan<- string) {
+func checkTarget(target string, fp WebFingerprintYaml, wg *sync.WaitGroup, sem chan struct{}, results chan<- string) {
 
 	defer wg.Done()
 
@@ -88,6 +41,8 @@ func checkTarget(target string, fp WebFingerprint, wg *sync.WaitGroup, sem chan 
 		}
 		defer resp.Body.Close()
 
+		faviconHash := getFaviconHash(target)
+
 		if resp.StatusCode == f.StatusCode || f.StatusCode == 0 {
 			bodyBytes, err := io.ReadAll(resp.Body)
 			if err != nil {
@@ -96,14 +51,24 @@ func checkTarget(target string, fp WebFingerprint, wg *sync.WaitGroup, sem chan 
 			}
 			bodyString := string(bodyBytes)
 
-			match := false
+			match := true
+			//关键词全匹配
 			if len(f.Keyword) != 0 {
-				match = true
+				for _, keyword := range f.Keyword {
+					if !strings.Contains(bodyString, keyword) {
+						match = false
+						break
+					}
+				}
 			}
-			for _, keyword := range f.Keyword {
-				if !strings.Contains(bodyString, keyword) {
-					match = false
-					break
+			//图标匹配一个即可
+			if len(f.FaviconHash) != 0 {
+				match = false
+				for _, hash := range f.FaviconHash {
+					if hash == faviconHash {
+						match = true
+						break
+					}
 				}
 			}
 
@@ -115,6 +80,35 @@ func checkTarget(target string, fp WebFingerprint, wg *sync.WaitGroup, sem chan 
 	}
 }
 
+func readYAMLFiles(dir string) ([]WebFingerprintYaml, error) {
+	var fingerprints []WebFingerprintYaml
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, file := range files {
+		if filepath.Ext(file.Name()) == ".yaml" {
+			filePath := filepath.Join(dir, file.Name())
+			data, err := os.ReadFile(filePath)
+			if err != nil {
+				return nil, err
+			}
+
+			var fp WebFingerprintYaml
+			err = yaml.Unmarshal(data, &fp)
+			if err != nil {
+				return nil, err
+			}
+
+			fingerprints = append(fingerprints, fp)
+		}
+	}
+
+	return fingerprints, nil
+}
+
 func main() {
 	target := flag.String("t", "", "Target URL to scan")
 	flag.Parse()
@@ -124,7 +118,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fingerprints, err := readYAMLFiles("web_fingerprint")
+	fingerprints, err := readFingerprint("web_fingerprint")
 	if err != nil {
 		fmt.Println("Error reading YAML files:", err)
 		os.Exit(1)
@@ -135,11 +129,8 @@ func main() {
 	var wg sync.WaitGroup
 	results := make(chan string, len(fingerprints))
 	sem := make(chan struct{}, 10) // Limit to 10 concurrent goroutines
-
-	for _, fp := range fingerprints {
-		wg.Add(1)
-		go checkTarget(*target, fp, &wg, sem, results)
-	}
+	wg.Add(1)
+	go AnalyzeWebFingerprint(*target, &wg, sem, results)
 
 	go func() {
 		wg.Wait()
