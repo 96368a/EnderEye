@@ -126,10 +126,10 @@ func singleTargtCheck(target string) {
 	}
 }
 
-func multipleCheck(targetFile string) {
+func multipleCheck(targetFile string) error {
 	bytes, err := os.ReadFile(targetFile)
 	if err != nil {
-		return
+		return err
 	}
 
 	var targets []string
@@ -155,6 +155,8 @@ func multipleCheck(targetFile string) {
 	for result := range results {
 		fmt.Printf("Match found: %s\n", result)
 	}
+
+	return nil
 }
 
 func main() {

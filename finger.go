@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"gopkg.in/yaml.v3"
 	"io"
 	"log/slog"
@@ -10,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Fingerprint struct {
@@ -125,8 +128,25 @@ func AnalyzeWebFingerprint(target string, wg *sync.WaitGroup, sem chan struct{},
 
 	tags := []string{}
 	if len(webFingerprints) > 0 {
+		timeCount := 0
+		baseURL, err := url.Parse(target)
+		if baseURL.Scheme == "" {
+			baseURL, err = url.Parse("http://" + target)
+		}
+		target = baseURL.String()
+		if baseURL.Scheme != "http" && baseURL.Scheme != "https" {
+			slog.Error("Invalid URL scheme", "scheme", baseURL.Scheme)
+			return
+		}
+		if err != nil {
+			slog.Error("Error parsing URL", "error", err)
+		}
 		for _, fp := range webFingerprints {
-			baseURL, err := url.Parse(target)
+			// 超时3次数则跳出
+			if timeCount > 3 {
+				break
+			}
+			// 创建URL对象方便后续拼接
 			baseURL.Path = fp.Path
 			finalURL := baseURL.String()
 			req, err := http.NewRequest(strings.ToUpper(fp.RequestMethod), finalURL, strings.NewReader(fp.RequestData))
@@ -134,14 +154,23 @@ func AnalyzeWebFingerprint(target string, wg *sync.WaitGroup, sem chan struct{},
 				slog.Error("Error creating request", "error", err)
 				continue
 			}
+			// 设置请求头
 			for key, value := range fp.RequestHeaders {
 				req.Header.Set(key, value)
 			}
 
-			client := &http.Client{}
+			// 超时时间为10s
+			client := &http.Client{Timeout: 10 * time.Second}
 			resp, err := client.Do(req)
 			if err != nil {
-				slog.Error("Error sending request", "error", err)
+				//slog.Error("Error sending request", "error", err)
+				if errors.Is(err, context.DeadlineExceeded) {
+					timeCount += 1
+					slog.Error("Timeout", "error", err)
+				} else {
+					slog.Error("Error sending request", "error", err)
+					break
+				}
 				continue
 			}
 			defer resp.Body.Close()
