@@ -13,7 +13,7 @@ func Test_singleTargtCheck(t *testing.T) {
 	}
 	targets := []string{"http://127.0.0.1", "http://demo.ruoyi.vip/"}
 	for _, target := range targets {
-		multipleCheck([]string{target})
+		multipleCheck([]string{target}, false)
 	}
 }
 
@@ -35,7 +35,7 @@ func Test_multipleCheck(t *testing.T) {
 	for _, line := range strings.Split(string(bytes), "\n") {
 		targets = append(targets, strings.TrimSpace(line))
 	}
-	err = multipleCheck(targets)
+	err = multipleCheck(targets, true)
 	if err != nil {
 		t.Errorf("multipleCheck() error = %v", err)
 	}

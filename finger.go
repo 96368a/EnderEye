@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"gopkg.in/yaml.v3"
 	"io"
 	"log/slog"
@@ -190,7 +191,12 @@ func AnalyzeWebFingerprint(target string, wg *sync.WaitGroup, sem chan struct{},
 			}
 
 			// 超时时间为10s
-			client := &http.Client{Timeout: 10 * time.Second}
+			client := &http.Client{
+				Timeout: 10 * time.Second,
+				Transport: &http.Transport{
+					TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+				},
+			}
 			resp, err := client.Do(req)
 			if err != nil {
 				// 处理连接超时与端口未开放

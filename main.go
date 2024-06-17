@@ -5,81 +5,12 @@ import (
 	"flag"
 	"fmt"
 	"gopkg.in/yaml.v3"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 )
-
-func checkTarget(target string, fp WebFingerprintYaml, wg *sync.WaitGroup, sem chan struct{}, results chan<- string) {
-
-	defer wg.Done()
-
-	// Acquire a semaphore
-	sem <- struct{}{}
-	defer func() { <-sem }()
-
-	for _, f := range fp.Fingerprint {
-		url := target + f.Path
-		req, err := http.NewRequest(strings.ToUpper(f.RequestMethod), url, strings.NewReader(f.RequestData))
-		if err != nil {
-			fmt.Println("Error creating request:", err)
-			continue
-		}
-
-		for key, value := range f.RequestHeaders {
-			req.Header.Set(key, value)
-		}
-
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		if err != nil {
-			fmt.Println("Error making request:", err)
-			continue
-		}
-		defer resp.Body.Close()
-
-		faviconHash := getFaviconHash(target)
-
-		if resp.StatusCode == f.StatusCode || f.StatusCode == 0 {
-			bodyBytes, err := io.ReadAll(resp.Body)
-			if err != nil {
-				fmt.Println("Error reading response body:", err)
-				continue
-			}
-			bodyString := string(bodyBytes)
-
-			match := true
-			//关键词全匹配
-			if len(f.Keyword) != 0 {
-				for _, keyword := range f.Keyword {
-					if !strings.Contains(bodyString, keyword) {
-						match = false
-						break
-					}
-				}
-			}
-			//图标匹配一个即可
-			if len(f.FaviconHash) != 0 {
-				match = false
-				for _, hash := range f.FaviconHash {
-					if hash == faviconHash {
-						match = true
-						break
-					}
-				}
-			}
-
-			if match {
-				results <- fp.Name
-				break
-			}
-		}
-	}
-}
 
 func readYAMLFiles(dir string) ([]WebFingerprintYaml, error) {
 	var fingerprints []WebFingerprintYaml
@@ -127,7 +58,7 @@ func readYAMLFiles(dir string) ([]WebFingerprintYaml, error) {
 //	}
 //}
 
-func multipleCheck(targets []string) error {
+func multipleCheck(targets []string, autoPoc bool) error {
 
 	var wg sync.WaitGroup
 	results := make(chan CheckResult, 1)
@@ -147,6 +78,15 @@ func multipleCheck(targets []string) error {
 	for result := range results {
 		marshal, _ := json.Marshal(result)
 		fmt.Printf("Match found: %s\n", marshal)
+		if autoPoc {
+			tags := []string{}
+			for _, tag := range result.Tags {
+				tags = append(tags, tag.Name)
+			}
+			if len(tags) > 0 {
+				afrogSingleScan(result.Target, strings.Join(tags, ","))
+			}
+		}
 	}
 	elapsedTime := time.Now().Sub(startTime)
 	fmt.Println("Scan completed in", elapsedTime)
@@ -157,6 +97,7 @@ func multipleCheck(targets []string) error {
 func main() {
 	target := flag.String("u", "", "Target URL to scan")
 	targetFile := flag.String("uf", "", "File containing target URLs to scan")
+	autoPoc := flag.Bool("auto", false, "Auto poc")
 	flag.Parse()
 
 	err := readFingerprint("web_fingerprint")
@@ -166,7 +107,7 @@ func main() {
 	}
 
 	if *target != "" {
-		multipleCheck([]string{*target})
+		multipleCheck([]string{*target}, *autoPoc)
 		//fmt.Println("Scanning target:", *target)
 		//startTime := time.Now()
 		//singleTargtCheck(*target)
@@ -184,7 +125,7 @@ func main() {
 		for _, line := range strings.Split(string(bytes), "\n") {
 			targets = append(targets, strings.TrimSpace(line))
 		}
-		multipleCheck(targets)
+		multipleCheck(targets, *autoPoc)
 	} else {
 		flag.Usage()
 	}
