@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"gopkg.in/yaml.v3"
@@ -109,39 +110,30 @@ func readYAMLFiles(dir string) ([]WebFingerprintYaml, error) {
 	return fingerprints, nil
 }
 
-func singleTargtCheck(target string) {
-	var wg sync.WaitGroup
-	results := make(chan map[string][]string, 1)
-	sem := make(chan struct{}, 10) // Limit to 10 concurrent goroutines
-	wg.Add(1)
-	go AnalyzeWebFingerprint(target, &wg, sem, results)
+//func singleTargtCheck(target string) {
+//	var wg sync.WaitGroup
+//	results := make(chan map[string][]string, 1)
+//	sem := make(chan struct{}, 10) // Limit to 10 concurrent goroutines
+//	wg.Add(1)
+//	go AnalyzeWebFingerprint(target, &wg, sem, results)
+//
+//	go func() {
+//		wg.Wait()
+//		close(results)
+//	}()
+//
+//	for result := range results {
+//		fmt.Printf("Match found: %s\n", result)
+//	}
+//}
 
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	for result := range results {
-		fmt.Printf("Match found: %s\n", result)
-	}
-}
-
-func multipleCheck(targetFile string) error {
-	bytes, err := os.ReadFile(targetFile)
-	if err != nil {
-		return err
-	}
-
-	var targets []string
-
-	for _, line := range strings.Split(string(bytes), "\n") {
-		targets = append(targets, strings.TrimSpace(line))
-	}
+func multipleCheck(targets []string) error {
 
 	var wg sync.WaitGroup
-	results := make(chan map[string][]string, 1)
+	results := make(chan CheckResult, 1)
 	sem := make(chan struct{}, 10) // Limit to 10 concurrent goroutines
-
+	startTime := time.Now()
+	fmt.Println("Scanning targets count:", len(targets))
 	for _, target := range targets {
 		wg.Add(1)
 		go AnalyzeWebFingerprint(target, &wg, sem, results)
@@ -153,8 +145,11 @@ func multipleCheck(targetFile string) error {
 	}()
 
 	for result := range results {
-		fmt.Printf("Match found: %s\n", result)
+		marshal, _ := json.Marshal(result)
+		fmt.Printf("Match found: %s\n", marshal)
 	}
+	elapsedTime := time.Now().Sub(startTime)
+	fmt.Println("Scan completed in", elapsedTime)
 
 	return nil
 }
@@ -171,13 +166,25 @@ func main() {
 	}
 
 	if *target != "" {
-		fmt.Println("Scanning target:", *target)
-		startTime := time.Now()
-		singleTargtCheck(*target)
-		elapsedTime := time.Now().Sub(startTime)
-		fmt.Println("Scan completed in", elapsedTime)
+		multipleCheck([]string{*target})
+		//fmt.Println("Scanning target:", *target)
+		//startTime := time.Now()
+		//singleTargtCheck(*target)
+		//elapsedTime := time.Now().Sub(startTime)
+		//fmt.Println("Scan completed in", elapsedTime)
 	} else if *targetFile != "" {
-		multipleCheck(*targetFile)
+		bytes, err := os.ReadFile(*targetFile)
+		if err != nil {
+			fmt.Println("Error reading target file:", err)
+			os.Exit(1)
+		}
+
+		var targets []string
+
+		for _, line := range strings.Split(string(bytes), "\n") {
+			targets = append(targets, strings.TrimSpace(line))
+		}
+		multipleCheck(targets)
 	} else {
 		flag.Usage()
 	}

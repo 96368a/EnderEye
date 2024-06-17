@@ -1,8 +1,6 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"gopkg.in/yaml.v3"
 	"io"
 	"log/slog"
@@ -53,6 +51,12 @@ type WebFingerTag struct {
 	Name       string     `yaml:"name"`
 	Priority   int        `yaml:"priority"`
 	NucleiTags [][]string `yaml:"nuclei_tags"`
+}
+
+type CheckResult struct {
+	Target   string         `yaml:"target"`
+	Tags     []WebFingerTag `yaml:"tags"`
+	IsPassed bool           `yaml:"is_passed"`
 }
 
 var webFingerprints = make(map[string]*WebFingerprint)
@@ -119,34 +123,47 @@ func readFingerprint(dir string) error {
 	return nil
 }
 
-func AnalyzeWebFingerprint(target string, wg *sync.WaitGroup, sem chan struct{}, results chan<- map[string][]string) {
+func AnalyzeWebFingerprint(target string, wg *sync.WaitGroup, sem chan struct{}, results chan<- CheckResult) {
 	defer wg.Done()
 
 	// Acquire a semaphore
 	sem <- struct{}{}
 	defer func() { <-sem }()
 
-	tags := []string{}
+	//tags := []string{}
+	// 指纹数量
 	if len(webFingerprints) > 0 {
 		timeCount := 0
+		// 最后识别完成返回的结构
+		result := CheckResult{
+			Target:   target,
+			IsPassed: true,
+			Tags:     make([]WebFingerTag, 0),
+		}
+		// 生成URL对象方便后续拼接
 		baseURL, err := url.Parse(target)
 		if baseURL.Scheme == "" {
 			baseURL, err = url.Parse("http://" + target)
 		}
-		target = baseURL.String()
-		if baseURL.Scheme != "http" && baseURL.Scheme != "https" {
-			slog.Error("Invalid URL scheme", "scheme", baseURL.Scheme)
-			return
-		}
 		if err != nil {
 			slog.Error("Error parsing URL", "error", err)
 		}
+		target = baseURL.String()
+		// 如果URL不合法则跳出
+		if baseURL.Scheme != "http" && baseURL.Scheme != "https" {
+			slog.Error("Invalid URL scheme", "scheme", baseURL.Scheme)
+			result.IsPassed = false
+			results <- result
+			return
+		}
+
 		for _, fp := range webFingerprints {
 			// 超时3次数则跳出
 			if timeCount > 3 {
 				break
+				result.IsPassed = false
 			}
-			// 创建URL对象方便后续拼接
+			// 拼接URL
 			baseURL.Path = fp.Path
 			finalURL := baseURL.String()
 			req, err := http.NewRequest(strings.ToUpper(fp.RequestMethod), finalURL, strings.NewReader(fp.RequestData))
@@ -158,19 +175,17 @@ func AnalyzeWebFingerprint(target string, wg *sync.WaitGroup, sem chan struct{},
 			for key, value := range fp.RequestHeaders {
 				req.Header.Set(key, value)
 			}
+			if fp.RequestHeaders["User-Agent"] == "" {
+				req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/134.0")
+			}
 
 			// 超时时间为10s
 			client := &http.Client{Timeout: 10 * time.Second}
 			resp, err := client.Do(req)
 			if err != nil {
-				//slog.Error("Error sending request", "error", err)
-				if errors.Is(err, context.DeadlineExceeded) {
-					timeCount += 1
-					slog.Error("Timeout", "error", err)
-				} else {
-					slog.Error("Error sending request", "error", err)
-					break
-				}
+				// 处理连接超时与端口未开放
+				timeCount += 1
+				slog.Error("Error sending request", "error", err)
 				continue
 			}
 			defer resp.Body.Close()
@@ -198,13 +213,14 @@ func AnalyzeWebFingerprint(target string, wg *sync.WaitGroup, sem chan struct{},
 					}
 
 					if match {
-						tags = append(tags, responseMatch.WebFingerTag.Name)
+						//tags = append(tags, responseMatch.WebFingerTag.Name)
+						result.Tags = append(result.Tags, responseMatch.WebFingerTag)
 						//results <- responseMatch.WebFingerTag.Name
 						break
 					}
 				}
 			}
 		}
-		results <- map[string][]string{target: tags}
+		results <- result
 	}
 }
