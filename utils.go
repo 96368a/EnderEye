@@ -4,8 +4,11 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"time"
 )
 
 func sumMD5(str string) string {
@@ -49,4 +52,17 @@ func getFaviconHash(target string) string {
 	// 计算favicon的hash值
 	hash := md5.Sum(body)
 	return hex.EncodeToString(hash[:])
+}
+
+func checkPort(host string, port string) bool {
+	address := fmt.Sprintf("%s:%s", host, port)
+	timeout := 3 * time.Second
+
+	conn, err := net.DialTimeout("tcp", address, timeout)
+	if err != nil {
+		return false
+	}
+
+	conn.Close()
+	return true
 }

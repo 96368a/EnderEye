@@ -156,6 +156,16 @@ func AnalyzeWebFingerprint(target string, wg *sync.WaitGroup, sem chan struct{},
 			results <- result
 			return
 		}
+		port := baseURL.Port()
+		// 检查端口是否开放
+		if port == "" {
+			port = "80"
+		}
+		if checkPort(baseURL.Hostname(), port) == false {
+			result.IsPassed = false
+			results <- result
+			return
+		}
 
 		for _, fp := range webFingerprints {
 			// 超时3次数则跳出
