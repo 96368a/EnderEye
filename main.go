@@ -109,28 +109,12 @@ func readYAMLFiles(dir string) ([]WebFingerprintYaml, error) {
 	return fingerprints, nil
 }
 
-func main() {
-	target := flag.String("t", "", "Target URL to scan")
-	flag.Parse()
-
-	if *target == "" {
-		fmt.Println("Please provide a target URL using the -t flag")
-		os.Exit(1)
-	}
-
-	fingerprints, err := readFingerprint("web_fingerprint")
-	if err != nil {
-		fmt.Println("Error reading YAML files:", err)
-		os.Exit(1)
-	}
-
-	startTime := time.Now()
-
+func singleTargtCheck(target string) {
 	var wg sync.WaitGroup
-	results := make(chan string, len(fingerprints))
+	results := make(chan map[string][]string, 1)
 	sem := make(chan struct{}, 10) // Limit to 10 concurrent goroutines
 	wg.Add(1)
-	go AnalyzeWebFingerprint(*target, &wg, sem, results)
+	go AnalyzeWebFingerprint(target, &wg, sem, results)
 
 	go func() {
 		wg.Wait()
@@ -140,7 +124,79 @@ func main() {
 	for result := range results {
 		fmt.Printf("Match found: %s\n", result)
 	}
-	endTime := time.Now()
-	elapsedTime := endTime.Sub(startTime)
-	fmt.Printf("Scan completed in %s\n", elapsedTime)
+}
+
+func multipleCheck(targetFile string) {
+	bytes, err := os.ReadFile(targetFile)
+	if err != nil {
+		return
+	}
+
+	var targets []string
+
+	for _, line := range strings.Split(string(bytes), "\n") {
+		targets = append(targets, strings.TrimSpace(line))
+	}
+
+	var wg sync.WaitGroup
+	results := make(chan map[string][]string, 1)
+	sem := make(chan struct{}, 10) // Limit to 10 concurrent goroutines
+
+	for _, target := range targets {
+		wg.Add(1)
+		go AnalyzeWebFingerprint(target, &wg, sem, results)
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	for result := range results {
+		fmt.Printf("Match found: %s\n", result)
+	}
+}
+
+func main() {
+	target := flag.String("u", "", "Target URL to scan")
+	targetFile := flag.String("uf", "", "File containing target URLs to scan")
+	flag.Parse()
+
+	err := readFingerprint("web_fingerprint")
+	if err != nil {
+		fmt.Println("Error reading YAML files:", err)
+		os.Exit(1)
+	}
+
+	if *target != "" {
+		fmt.Println("Scanning target:", *target)
+		startTime := time.Now()
+		singleTargtCheck(*target)
+		elapsedTime := time.Now().Sub(startTime)
+		fmt.Println("Scan completed in", elapsedTime)
+	} else if *targetFile != "" {
+		multipleCheck(*targetFile)
+	} else {
+		flag.Usage()
+	}
+
+	//startTime := time.Now()
+	//
+	//var wg sync.WaitGroup
+	//results := make(chan string, len(fingerprints))
+	//sem := make(chan struct{}, 10) // Limit to 10 concurrent goroutines
+	//wg.Add(1)
+	//go AnalyzeWebFingerprint(*target, &wg, sem, results)
+	//
+	//go func() {
+	//	wg.Wait()
+	//	close(results)
+	//}()
+	//
+	//for result := range results {
+	//	fmt.Printf("Match found: %s\n", result)
+	//}
+	//endTime := time.Now()
+	//elapsedTime := endTime.Sub(startTime)
+	//fmt.Printf("Scan completed in %s\n", elapsedTime)
 }

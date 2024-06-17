@@ -8,12 +8,9 @@ import (
 func Test_readFingerprint(t *testing.T) {
 
 	startTime := time.Now()
-	fingerprints, err := readFingerprint("web_fingerprint")
+	err := readFingerprint("web_fingerprint")
 	if err != nil {
 		t.Errorf("readFingerprint() error = %v", err)
-	}
-	if len(fingerprints) == 0 {
-		t.Errorf("readFingerprint() error = %v", "no fingerprints")
 	}
 	endTime := time.Now()
 	elapsedTime := endTime.Sub(startTime)

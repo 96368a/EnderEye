@@ -54,12 +54,12 @@ type WebFingerTag struct {
 
 var webFingerprints = make(map[string]*WebFingerprint)
 
-func readFingerprint(dir string) ([]WebFingerprintYaml, error) {
-	var fingerprints []WebFingerprintYaml
+func readFingerprint(dir string) error {
+	//var fingerprints []WebFingerprintYaml
 
 	files, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	for _, file := range files {
@@ -67,13 +67,13 @@ func readFingerprint(dir string) ([]WebFingerprintYaml, error) {
 			filePath := filepath.Join(dir, file.Name())
 			data, err := os.ReadFile(filePath)
 			if err != nil {
-				return nil, err
+				return err
 			}
 
 			var fp WebFingerprintYaml
 			err = yaml.Unmarshal(data, &fp)
 			if err != nil {
-				return nil, err
+				return err
 			}
 
 			for _, fingerprint := range fp.Fingerprint {
@@ -109,20 +109,21 @@ func readFingerprint(dir string) ([]WebFingerprintYaml, error) {
 				}
 			}
 
-			fingerprints = append(fingerprints, fp)
+			//fingerprints = append(fingerprints, fp)
 		}
 	}
 
-	return fingerprints, nil
+	return nil
 }
 
-func AnalyzeWebFingerprint(target string, wg *sync.WaitGroup, sem chan struct{}, results chan<- string) {
+func AnalyzeWebFingerprint(target string, wg *sync.WaitGroup, sem chan struct{}, results chan<- map[string][]string) {
 	defer wg.Done()
 
 	// Acquire a semaphore
 	sem <- struct{}{}
 	defer func() { <-sem }()
 
+	tags := []string{}
 	if len(webFingerprints) > 0 {
 		for _, fp := range webFingerprints {
 			baseURL, err := url.Parse(target)
@@ -168,11 +169,13 @@ func AnalyzeWebFingerprint(target string, wg *sync.WaitGroup, sem chan struct{},
 					}
 
 					if match {
-						results <- responseMatch.WebFingerTag.Name
+						tags = append(tags, responseMatch.WebFingerTag.Name)
+						//results <- responseMatch.WebFingerTag.Name
 						break
 					}
 				}
 			}
 		}
+		results <- map[string][]string{target: tags}
 	}
 }
